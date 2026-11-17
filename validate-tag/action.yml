@@ -1,0 +1,65 @@
+name: Validate release tag
+description: >
+  Check that the run is on a v<version> tag matching package.json, that stable
+  versions are on the main branch, and pick the npm dist-tag. Needs a checkout
+  with fetch-depth 0.
+inputs:
+  working-directory:
+    description: Directory containing package.json
+    default: "."
+  main-branch:
+    description: Branch that stable releases must be on
+    default: main
+outputs:
+  name:
+    description: Package name
+    value: ${{ steps.validate.outputs.name }}
+  version:
+    description: Package version
+    value: ${{ steps.validate.outputs.version }}
+  channel:
+    description: "npm dist-tag: latest, or the first prerelease identifier"
+    value: ${{ steps.validate.outputs.channel }}
+runs:
+  using: composite
+  steps:
+    - id: validate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MAIN_BRANCH: ${{ inputs.main-branch }}
+      run: |
+        [[ "$GITHUB_REF_TYPE" == tag ]] || {
+          echo "Release must run on a v<version> tag, not $GITHUB_REF" >&2
+          exit 1
+        }
+        version=$(jq -r .version package.json)
+        name=$(jq -r .name package.json)
+        test "$GITHUB_REF_NAME" = "v$version" || {
+          echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+          exit 1
+        }
+        [[ "$version" != *+* ]] || {
+          echo "Build metadata is not supported: $version" >&2
+          exit 1
+        }
+        if [[ "$version" == *-* ]]; then
+          channel="${version#*-}"
+          channel="${channel%%.*}"
+          [[ "$channel" =~ ^[a-z][a-z0-9-]*$ && "$channel" != latest ]] || {
+            echo "Invalid prerelease channel: $channel" >&2
+            exit 1
+          }
+        else
+          channel=latest
+          git fetch --no-tags origin "$MAIN_BRANCH:refs/remotes/origin/$MAIN_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$MAIN_BRANCH" || {
+            echo "Stable release commit must be on $MAIN_BRANCH" >&2
+            exit 1
+          }
+        fi
+        {
+          echo "name=$name"
+          echo "version=$version"
+          echo "channel=$channel"
+        } >> "$GITHUB_OUTPUT"

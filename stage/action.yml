@@ -1,0 +1,62 @@
+name: Stage the tested package
+description: >
+  Download the packed tarball, check its SHA-256, and stage it on npm with
+  trusted publishing. Runs no package code and needs no checkout. The job needs
+  id-token: write.
+inputs:
+  artifact-id:
+    description: Artifact ID from the pack action
+    required: true
+  sha256:
+    description: SHA-256 from the pack action
+    required: true
+  name:
+    description: Package name, for the run summary
+    required: true
+  version:
+    description: Package version, for the run summary
+    required: true
+  channel:
+    description: npm dist-tag
+    required: true
+  node-version:
+    description: Node.js version providing npm with staged publishing
+    default: "24.22.1"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      with:
+        artifact-ids: ${{ inputs.artifact-id }}
+        path: ${{ runner.temp }}/npm-release
+        merge-multiple: true
+    - shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.name }}
+        VERSION: ${{ inputs.version }}
+        CHANNEL: ${{ inputs.channel }}
+        EXPECTED_SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -o pipefail
+        set -- "$RUNNER_TEMP"/npm-release/*.tgz
+        test "$#" -eq 1
+        TARBALL="$1"
+        echo "$EXPECTED_SHA256  $TARBALL" | sha256sum -c -
+        {
+          echo "$PACKAGE_NAME@$VERSION — source $GITHUB_SHA — npm channel $CHANNEL"
+          echo "Review on npm's Staged Packages page, then approve with 2FA or npm stage approve <stage-id>."
+        } >> "$GITHUB_STEP_SUMMARY"
+        npm stage publish "$TARBALL" \
+          --ignore-scripts --provenance --access public --tag "$CHANNEL" \
+          2>&1 | tee "$RUNNER_TEMP/npm-stage.log"
+    - name: Preserve staging output and stage ID
+      if: always()
+      shell: bash
+      run: |
+        if test -f "$RUNNER_TEMP/npm-stage.log"; then
+          cat "$RUNNER_TEMP/npm-stage.log" >> "$GITHUB_STEP_SUMMARY"
+        fi

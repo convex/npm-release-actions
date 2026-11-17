@@ -1,0 +1,20 @@
+name: Check release notes
+description: >
+  Fail if Changesets are still pending or CHANGELOG.md has no notes for the
+  package.json version. Run after installing dependencies.
+inputs:
+  working-directory:
+    description: Directory containing package.json, CHANGELOG.md and .changeset
+    default: "."
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Compare against this checkout while reading all notes, including prerelease state.
+        git update-ref refs/heads/main HEAD
+        npx changeset status --output "$RUNNER_TEMP/changesets.json"
+        jq -e '.changesets | length == 0' "$RUNNER_TEMP/changesets.json"
+        version=$(jq -r .version package.json)
+        awk -v version="$version" '/^## / { active=($0 == "## " version); next } active && !/^#/ && /[[:alnum:]]/ { found=1 } END { exit !found }' CHANGELOG.md
