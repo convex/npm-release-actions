@@ -18,6 +18,26 @@ Each action takes a `working-directory` input where it reads `package.json`.
 See [action-cache](https://github.com/convex/action-cache/tree/main/.github/workflows)
 for a complete `release.yml` and `version.yml`.
 
+## Concurrency
+
+Group Release runs per tag and the version workflow per commit, without
+`queue`:
+
+```yaml
+# release.yml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+# version.yml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+```
+
+No run is cancelled. `version-pr` skips runs whose commit is no longer the tip of
+the base branch, and `tag-version` accepts a tag that another run just created on
+the same commit.
+
 Pin these actions by commit SHA. npm trusted publishing checks the calling
 workflow's filename, so registering the caller's `release.yml` is enough.
 

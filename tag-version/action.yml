@@ -41,6 +41,15 @@ runs:
           [[ "$previous" == "$version" ]] || break
         done
         # Tags pushed with GITHUB_TOKEN don't trigger workflows, so start the release on the tag.
-        gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$commit" >/dev/null
+        if ! out=$(gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$commit" 2>&1); then
+          # Another run for a later commit may have just created the same tag.
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null || true)
+          if [[ "$existing" == "$commit" ]]; then
+            echo "$tag was just created at $commit by another run, which starts the release"
+            exit 0
+          fi
+          echo "$out" >&2
+          exit 1
+        fi
         gh workflow run "$RELEASE_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$tag"
         echo "Tagged $commit as $tag and started $RELEASE_WORKFLOW" >> "$GITHUB_STEP_SUMMARY"

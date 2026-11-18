@@ -49,12 +49,21 @@ cat > "$stub/npm" <<'S'
 #!/bin/bash
 case "$NPM_MODE" in published) echo "${2##*@}";; missing) echo "npm error code E404" >&2; exit 1;; down) echo "npm error code ECONNRESET" >&2; exit 1;; esac
 S
-printf '#!/bin/bash\necho "gh $*" >> "$LOG"\n' > "$stub/gh"; chmod +x "$stub"/*
-tagver() { # name repo pkgdir npm-mode want-exit want-sha
+cat > "$stub/gh" <<'S'
+#!/bin/bash
+echo "gh $*" >> "$LOG"
+# GH_EXISTING simulates a tag another run already created: creating it fails, reading it returns that SHA.
+if [[ -n "${GH_EXISTING:-}" && "$*" == *"git/refs -f ref="* ]]; then echo "Reference already exists" >&2; exit 1; fi
+if [[ -n "${GH_EXISTING:-}" && "$*" == *"git/ref/tags/"* ]]; then echo "$GH_EXISTING"; fi
+S
+chmod +x "$stub"/*
+tagver() { # name repo pkgdir npm-mode want-exit want-sha [existing-sha]
   local log; log=$(mktemp)
-  ( cd "$2/$3" && PATH="$stub:$PATH" LOG=$log NPM_MODE=$4 GITHUB_REPOSITORY=o/r GITHUB_STEP_SUMMARY=/dev/null RELEASE_WORKFLOW=release.yml \
+  ( cd "$2/$3" && PATH="$stub:$PATH" LOG=$log NPM_MODE=$4 GH_EXISTING=${7:-} GITHUB_REPOSITORY=o/r GITHUB_STEP_SUMMARY=/dev/null RELEASE_WORKFLOW=release.yml \
     bash -eo pipefail -c "$TAG" >/dev/null 2>&1 ); local rc=$?
   local sha; sha=$(sed -n 's/.* -f sha=\([0-9a-f]*\).*/\1/p' "$log")
+  local ran; ran=$(grep -c 'workflow run' "$log" || true)
+  if [[ -n "${7:-}" ]]; then check "tag-version: $1 (no release started)" "$ran" "0" ""; fi
   check "tag-version: $1" "$rc:${sha:-none}" "$5:${6:-none}" "$(tr '\n' ';' < "$log")"
 }
 r=$(mktemp -d); git_repo "$r"
@@ -63,6 +72,8 @@ setv "$r" 0.3.1 dep >/dev/null; BUMP=$(setv "$r" 0.3.2 bump); setv "$r" 0.3.2 la
 tagver "untagged and not on npm"   "$r" . missing 0 "$BUMP"
 tagver "already on npm"            "$r" . published 0
 tagver "npm unreachable"           "$r" . down 1
+tagver "raced: same commit"         "$r" . missing 0 "$BUMP" "$BUMP"
+tagver "raced: other commit"        "$r" . missing 1 "$BUMP" "0000000000000000000000000000000000000000"
 git -C "$r" tag v0.3.2 "$BUMP"
 tagver "tag exists"                "$r" . missing 0
 m=$(mktemp -d); git_repo "$m"
