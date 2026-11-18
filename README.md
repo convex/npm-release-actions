@@ -34,9 +34,11 @@ concurrency:
   cancel-in-progress: false
 ```
 
-No run is cancelled. `version-pr` skips runs whose commit is no longer the tip of
-the base branch, and `tag-version` accepts a tag that another run just created on
-the same commit.
+Runs for different tags or commits never cancel each other. A newer run for
+the same tag or commit (a duplicate dispatch or a moved tag) replaces an older
+pending one, which is equivalent or the one you want. `version-pr` skips runs
+whose commit is no longer the tip of the base branch, and `tag-version` accepts a
+tag that another run just created on the same commit.
 
 Pin these actions by commit SHA. npm trusted publishing checks the calling
 workflow's filename, so registering the caller's `release.yml` is enough.
