@@ -1,0 +1,62 @@
+name: Open or update the version PR
+description: >
+  When Changesets are pending, open or update the version PR with Changesets,
+  unless the base branch has moved past this run's commit. Run on pushes to the
+  base branch after checking out and installing dependencies. The job needs
+  contents: write and pull-requests: write.
+inputs:
+  working-directory:
+    description: Directory containing package.json and .changeset
+    default: "."
+  base-branch:
+    description: Branch the version PR targets
+    default: main
+  pr-title:
+    description: Version PR title
+    default: Prepare next release
+  commit-message:
+    description: Version commit message
+    default: Version packages
+  sync-lockfile:
+    description: >
+      Also update package-lock.json's version fields after changeset version
+    default: "false"
+  github-token:
+    description: Token that can push the version branch and open the PR
+    default: ${{ github.token }}
+outputs:
+  pr-number:
+    description: Number of the version PR, if one was opened or updated
+    value: ${{ steps.version.outputs.pr-number }}
+runs:
+  using: composite
+  steps:
+    - id: mode
+      uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      with:
+        cwd: ${{ inputs.working-directory }}
+    - id: freshness
+      if: steps.mode.outputs.mode == 'version'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        BASE_BRANCH: ${{ inputs.base-branch }}
+      run: |
+        head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BASE_BRANCH" --jq '.object.sha')"
+        if [[ "$head" == "$GITHUB_SHA" ]]; then
+          echo "current=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "current=false" >> "$GITHUB_OUTPUT"
+          echo "Skipping version PR update: $BASE_BRANCH has moved beyond this run's commit."
+        fi
+    - id: version
+      if: steps.mode.outputs.mode == 'version' && steps.freshness.outputs.current == 'true'
+      uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      with:
+        cwd: ${{ inputs.working-directory }}
+        github-token: ${{ inputs.github-token }}
+        pr-title: ${{ inputs.pr-title }}
+        commit-message: ${{ inputs.commit-message }}
+        pr-base-branch: ${{ inputs.base-branch }}
+        # Empty means Changesets' default `changeset version`.
+        script: ${{ inputs.sync-lockfile == 'true' && format('bash {0}/version.sh', github.action_path) || '' }}
