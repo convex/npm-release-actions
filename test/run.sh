@@ -75,4 +75,11 @@ setv "$s" 0.0.47 a pkg >/dev/null; git -C "$s" tag v0.0.47; SUB=$(setv "$s" 0.0.
 setv "$s" 9.9.9 other other >/dev/null
 tagver "package in a subdirectory" "$s" pkg missing 0 "$SUB"
 
+# version-pr's lockfile script: changeset version, then a lockfile-only install.
+v=$(mktemp -d); vlog=$(mktemp)
+printf '#!/bin/bash\necho "npx $*" >> "%s"\n' "$vlog" > "$v/npx"
+printf '#!/bin/bash\necho "npm $*" >> "%s"\n' "$vlog" > "$v/npm"; chmod +x "$v"/*
+PATH="$v:$PATH" bash "$root/version-pr/version.sh"
+check "version-pr: lockfile sync order" "$(tr '\n' ';' < "$vlog")" "npx changeset version;npm install --package-lock-only --ignore-scripts;" ""
+
 [[ $failures == 0 ]] && echo "all passed" || { echo "$failures failed"; exit 1; }
