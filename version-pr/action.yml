@@ -19,8 +19,9 @@ inputs:
     default: Version packages
   sync-lockfile:
     description: >
-      Also update package-lock.json's version fields after changeset version
-    default: "false"
+      Also update package-lock.json's version fields after changeset version.
+      Set to "false" to run plain changeset version.
+    default: "true"
   github-token:
     description: Token that can push the version branch and open the PR
     default: ${{ github.token }}
