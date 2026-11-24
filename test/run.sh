@@ -93,4 +93,87 @@ printf '#!/bin/bash\necho "npm $*" >> "%s"\n' "$vlog" > "$v/npm"; chmod +x "$v"/
 PATH="$v:$PATH" bash "$root/version-pr/version.sh"
 check "version-pr: lockfile sync order" "$(tr '\n' ';' < "$vlog")" "npx changeset version;npm install --package-lock-only --ignore-scripts;" ""
 
+# version-pr: read the plan from a package directory on a detached checkout.
+git_repo "$v/repo"
+TITLE_PREVIOUS=$(setv "$v/repo" 1.2.0 initial pkg)
+TITLE_HEAD=$(setv "$v/repo" 1.2.0 next pkg)
+git -C "$v/repo" checkout -q --detach "$TITLE_HEAD"
+git -C "$v/repo" branch -D main >/dev/null
+mkdir -p "$v/repo/pkg/node_modules/@changesets/cli" "$v/repo/pkg/.changeset"
+echo '{"version":"2.27.10"}' > "$v/repo/pkg/node_modules/@changesets/cli/package.json"
+echo '{"baseBranch":"main"}' > "$v/repo/pkg/.changeset/config.json"
+cat > "$v/repo/pkg/node_modules/@changesets/cli/bin.js" <<'JS'
+const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+assert.deepEqual(process.argv.slice(2, 4), ["status", "--output"]);
+assert.equal(
+  execFileSync("git", ["rev-parse", process.env.TITLE_BASE], { encoding: "utf8" }).trim(),
+  process.env.TITLE_HEAD,
+);
+if (process.env.PLAN === "fail") process.exit(7);
+assert.equal(path.isAbsolute(process.argv[4]), false);
+fs.writeFileSync(path.join(process.cwd(), process.argv[4]), process.env.PLAN);
+JS
+release_title() { # name plan expected-exit:title [workflow-base] [configured-ref]
+  local out rc
+  out=$(mktemp)
+  (cd "$v/repo/pkg" && BASE_BRANCH="${4:-main}" TITLE_BASE="${5:-refs/heads/main}" \
+    GITHUB_SHA="$TITLE_HEAD" TITLE_HEAD="$TITLE_HEAD" PLAN="$2" GITHUB_OUTPUT="$out" \
+    node "$root/version-pr/release-title.cjs") 2>"$out.err"
+  rc=$?
+  check "version-pr: $1" "$rc:$(cat "$out")" "$3" "$(head -c 150 "$out.err")"
+}
+release_title "primary package in a workspace" \
+  '{"releases":[{"name":"other","newVersion":"4.2.1"},{"name":"@x/pkg","newVersion":"1.3.0"}]}' \
+  "0:title=Release v1.3.0"
+release_title "sole changed package, including prerelease suffix" \
+  '{"releases":[{"name":"@x/pkg","oldVersion":"1.2.0","newVersion":"1.2.0"},{"name":"other","newVersion":"4.2.1-alpha.0"}]}' \
+  "0:title=Release v4.2.1-alpha.0"
+release_title "several packages with no primary release" \
+  '{"releases":[{"name":"first","newVersion":"1.3.0"},{"name":"second","newVersion":"4.2.1"}]}' "0:"
+release_title "CLI failure leaves no title for the workflow to use" "fail" "1:"
+check "version-pr: temporary base branch removed after CLI failure" \
+  "$(git -C "$v/repo" for-each-ref --format='%(refname)' refs/heads/main)" "" ""
+
+TITLE_PLAN='{"releases":[{"name":"@x/pkg","newVersion":"1.3.0"}]}'
+git -C "$v/repo" branch main "$TITLE_HEAD"
+release_title "existing local base branch" "$TITLE_PLAN" "0:title=Release v1.3.0"
+check "version-pr: existing base branch preserved" \
+  "$(git -C "$v/repo" rev-parse --verify --quiet refs/heads/main)" "$TITLE_HEAD" ""
+git -C "$v/repo" branch -D main >/dev/null
+
+git -C "$v/repo" update-ref refs/remotes/origin/main "$TITLE_PREVIOUS"
+release_title "verified checkout wins over stale origin/main" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0"
+check "version-pr: stale remote-tracking branch preserved" \
+  "$(git -C "$v/repo" rev-parse --verify --quiet refs/remotes/origin/main)" "$TITLE_PREVIOUS" ""
+echo '{"baseBranch":"origin/main"}' > "$v/repo/pkg/.changeset/config.json"
+release_title "configured stale origin/main uses the verified commit" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0" main refs/remotes/origin/main
+release_title "configured stale origin/main with a CLI failure" "fail" \
+  "1:" main refs/remotes/origin/main
+check "version-pr: configured tracking branch restored" \
+  "$(git -C "$v/repo" rev-parse --verify --quiet refs/remotes/origin/main)" "$TITLE_PREVIOUS" ""
+echo '{"baseBranch":"main"}' > "$v/repo/pkg/.changeset/config.json"
+
+git -C "$v/repo" update-ref refs/remotes/origin/main "$TITLE_HEAD"
+echo generated > "$v/repo/generated"
+git -C "$v/repo" add generated
+git -C "$v/repo" commit -qm generated
+TITLE_GENERATED=$(git -C "$v/repo" rev-parse HEAD)
+release_title "verified commit wins when HEAD has advanced" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0"
+check "version-pr: advanced HEAD preserved" \
+  "$(git -C "$v/repo" rev-parse HEAD)" "$TITLE_GENERATED" ""
+git -C "$v/repo" checkout -q --detach "$TITLE_HEAD"
+release_title "Changesets base differs from the PR target" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0" release
+echo '{"baseBranch":"origin/main"}' > "$v/repo/pkg/.changeset/config.json"
+release_title "configured remote-tracking base" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0" release refs/remotes/origin/main
+check "version-pr: existing remote-tracking branch preserved" \
+  "$(git -C "$v/repo" rev-parse --verify --quiet refs/remotes/origin/main)" "$TITLE_HEAD" ""
+
 [[ $failures == 0 ]] && echo "all passed" || { echo "$failures failed"; exit 1; }
