@@ -93,19 +93,28 @@ printf '#!/bin/bash\necho "npm $*" >> "%s"\n' "$vlog" > "$v/npm"; chmod +x "$v"/
 PATH="$v:$PATH" bash "$root/version-pr/version.sh"
 check "version-pr: lockfile sync order" "$(tr '\n' ';' < "$vlog")" "npx changeset version;npm install --package-lock-only --ignore-scripts;" ""
 
-# version-pr: read the planned version from the package's working directory.
-mkdir -p "$v/pkg"
-echo '{"name":"@x/pkg"}' > "$v/pkg/package.json"
-cat > "$v/npx" <<'S'
-#!/bin/bash
-[[ "$1 $2 $3 $4" == "--no-install changeset status --output" ]] || exit 1
-printf '%s\n' "$PLAN" > "$5"
-S
+# version-pr: read the plan from a package directory on a detached checkout.
+git_repo "$v/repo"
+TITLE_HEAD=$(setv "$v/repo" 1.2.0 initial pkg)
+git -C "$v/repo" checkout -q --detach "$TITLE_HEAD"
+git -C "$v/repo" branch -D main >/dev/null
+mkdir -p "$v/repo/pkg/node_modules/@changesets/cli"
+cat > "$v/repo/pkg/node_modules/@changesets/cli/bin.js" <<'JS'
+const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+assert.deepEqual(process.argv.slice(2, 4), ["status", "--output"]);
+assert.equal(
+  execFileSync("git", ["rev-parse", "refs/heads/main"], { encoding: "utf8" }).trim(),
+  process.env.TITLE_HEAD,
+);
+fs.writeFileSync(process.argv[4], process.env.PLAN);
+JS
 release_title() { # name releases expected-title
   local out
   out=$(mktemp)
-  if (cd "$v/pkg" && PATH="$v:$PATH" PLAN="{\"releases\":$2}" GITHUB_OUTPUT="$out" \
-    bash "$root/version-pr/release-title.sh"); then
+  if (cd "$v/repo/pkg" && BASE_BRANCH=main TITLE_HEAD="$TITLE_HEAD" PLAN="{\"releases\":$2}" \
+    GITHUB_OUTPUT="$out" node "$root/version-pr/release-title.cjs"); then
     check "version-pr: $1" "$(cat "$out")" "$3" ""
   else
     check "version-pr: $1" "failed" "$3" ""
@@ -119,5 +128,7 @@ release_title "sole changed package, including prerelease suffix" \
   "title=Release v4.2.1-alpha.0"
 release_title "several packages with no primary release" \
   '[{"name":"first","newVersion":"1.3.0"},{"name":"second","newVersion":"4.2.1"}]' ""
+check "version-pr: temporary base branch removed" \
+  "$(git -C "$v/repo" for-each-ref --format='%(refname)' refs/heads/main)" "" ""
 
 [[ $failures == 0 ]] && echo "all passed" || { echo "$failures failed"; exit 1; }

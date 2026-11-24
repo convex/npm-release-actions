@@ -50,11 +50,13 @@ runs:
         fi
     - id: release-title
       if: steps.freshness.outputs.current == 'true' && (inputs.pr-title == '' || inputs.commit-message == '')
+      continue-on-error: true
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH/release-title.sh"
+        BASE_BRANCH: ${{ inputs.base-branch }}
+      run: node "$ACTION_PATH/release-title.cjs"
     - id: version
       if: steps.mode.outputs.mode == 'version' && steps.freshness.outputs.current == 'true'
       uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
