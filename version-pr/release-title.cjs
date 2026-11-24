@@ -10,33 +10,39 @@ const cli = projectRequire.resolve("@changesets/cli/bin.js");
 const cliRequire = createRequire(cli);
 const manifest = projectRequire("./package.json");
 
-function resolveCommit(ref) {
+function resolveRevision(revision) {
   const result = spawnSync(
     "git",
-    ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`],
+    ["rev-parse", "--verify", "--quiet", "--end-of-options", revision],
     { encoding: "utf8" },
   );
   if (result.error) throw result.error;
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
-function createMissingBase(configuredBase) {
-  if (resolveCommit(configuredBase)) return;
-
+function prepareBase(configuredBase) {
   const remote = /^(?:refs\/remotes\/)?origin\/(.+)$/.exec(configuredBase);
   const branch = remote ? remote[1] : configuredBase.replace(/^refs\/heads\//, "");
   const remoteRef = `refs/remotes/origin/${branch}`;
   const ref = remote ? remoteRef : `refs/heads/${branch}`;
-  const head = resolveCommit("HEAD");
-  // Only use HEAD for the branch already verified by the workflow's freshness check.
-  const verifiedHead =
-    branch === process.env.BASE_BRANCH && head === process.env.GITHUB_SHA ? head : undefined;
-  const commit = branch === process.env.BASE_BRANCH ? verifiedHead : resolveCommit(remoteRef);
+  const current = resolveRevision(`${configuredBase}^{commit}`);
+  const isTarget = branch === process.env.BASE_BRANCH;
+  if (!isTarget && current) return;
+
+  // The workflow verified GITHUB_SHA against the live target branch.
+  const source = isTarget ? process.env.GITHUB_SHA : remoteRef;
+  const commit = source && resolveRevision(`${source}^{commit}`);
   if (!commit) {
     throw new Error(`Changesets base ref ${JSON.stringify(configuredBase)} is unavailable`);
   }
-  execFileSync("git", ["update-ref", ref, commit, ""]);
-  return { ref, commit };
+  if (current === commit) return;
+
+  const previous = resolveRevision(ref) ?? "";
+  if (previous && spawnSync("git", ["symbolic-ref", "--quiet", ref]).status === 0) {
+    throw new Error(`Cannot temporarily replace the symbolic base ref ${JSON.stringify(ref)}`);
+  }
+  execFileSync("git", ["update-ref", "--no-deref", ref, commit, previous]);
+  return { ref, commit, previous };
 }
 
 async function readPlan() {
@@ -52,16 +58,24 @@ async function readPlan() {
   const planFile = path.join(temporaryDir, "plan.json");
   let temporaryBase;
   try {
-    temporaryBase = createMissingBase(configuredBase);
+    temporaryBase = prepareBase(configuredBase);
+    if (temporaryBase && resolveRevision(`${configuredBase}^{commit}`) !== temporaryBase.commit) {
+      throw new Error(`Changesets base ref ${JSON.stringify(configuredBase)} is ambiguous`);
+    }
     // Changesets 2 joins this argument with cwd, while Changesets 3 resolves it.
     execFileSync(process.execPath, [cli, "status", "--output", path.relative(cwd, planFile)], {
       stdio: "inherit",
     });
     return JSON.parse(fs.readFileSync(planFile, "utf8"));
   } finally {
-    fs.rmSync(temporaryDir, { recursive: true, force: true });
-    if (temporaryBase) {
-      execFileSync("git", ["update-ref", "-d", temporaryBase.ref, temporaryBase.commit]);
+    try {
+      if (temporaryBase) {
+        const { ref, commit, previous } = temporaryBase;
+        const restore = previous ? [ref, previous, commit] : ["-d", ref, commit];
+        execFileSync("git", ["update-ref", "--no-deref", ...restore]);
+      }
+    } finally {
+      fs.rmSync(temporaryDir, { recursive: true, force: true });
     }
   }
 }

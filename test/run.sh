@@ -149,8 +149,25 @@ release_title "verified checkout wins over stale origin/main" "$TITLE_PLAN" \
   "0:title=Release v1.3.0"
 check "version-pr: stale remote-tracking branch preserved" \
   "$(git -C "$v/repo" rev-parse --verify --quiet refs/remotes/origin/main)" "$TITLE_PREVIOUS" ""
+echo '{"baseBranch":"origin/main"}' > "$v/repo/pkg/.changeset/config.json"
+release_title "configured stale origin/main uses the verified commit" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0" main refs/remotes/origin/main
+release_title "configured stale origin/main with a CLI failure" "fail" \
+  "1:" main refs/remotes/origin/main
+check "version-pr: configured tracking branch restored" \
+  "$(git -C "$v/repo" rev-parse --verify --quiet refs/remotes/origin/main)" "$TITLE_PREVIOUS" ""
+echo '{"baseBranch":"main"}' > "$v/repo/pkg/.changeset/config.json"
 
 git -C "$v/repo" update-ref refs/remotes/origin/main "$TITLE_HEAD"
+echo generated > "$v/repo/generated"
+git -C "$v/repo" add generated
+git -C "$v/repo" commit -qm generated
+TITLE_GENERATED=$(git -C "$v/repo" rev-parse HEAD)
+release_title "verified commit wins when HEAD has advanced" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0"
+check "version-pr: advanced HEAD preserved" \
+  "$(git -C "$v/repo" rev-parse HEAD)" "$TITLE_GENERATED" ""
+git -C "$v/repo" checkout -q --detach "$TITLE_HEAD"
 release_title "Changesets base differs from the PR target" "$TITLE_PLAN" \
   "0:title=Release v1.3.0" release
 echo '{"baseBranch":"origin/main"}' > "$v/repo/pkg/.changeset/config.json"
