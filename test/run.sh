@@ -95,7 +95,8 @@ check "version-pr: lockfile sync order" "$(tr '\n' ';' < "$vlog")" "npx changese
 
 # version-pr: read the plan from a package directory on a detached checkout.
 git_repo "$v/repo"
-TITLE_HEAD=$(setv "$v/repo" 1.2.0 initial pkg)
+TITLE_PREVIOUS=$(setv "$v/repo" 1.2.0 initial pkg)
+TITLE_HEAD=$(setv "$v/repo" 1.2.0 next pkg)
 git -C "$v/repo" checkout -q --detach "$TITLE_HEAD"
 git -C "$v/repo" branch -D main >/dev/null
 mkdir -p "$v/repo/pkg/node_modules/@changesets/cli" "$v/repo/pkg/.changeset"
@@ -142,6 +143,12 @@ release_title "existing local base branch" "$TITLE_PLAN" "0:title=Release v1.3.0
 check "version-pr: existing base branch preserved" \
   "$(git -C "$v/repo" rev-parse --verify --quiet refs/heads/main)" "$TITLE_HEAD" ""
 git -C "$v/repo" branch -D main >/dev/null
+
+git -C "$v/repo" update-ref refs/remotes/origin/main "$TITLE_PREVIOUS"
+release_title "verified checkout wins over stale origin/main" "$TITLE_PLAN" \
+  "0:title=Release v1.3.0"
+check "version-pr: stale remote-tracking branch preserved" \
+  "$(git -C "$v/repo" rev-parse --verify --quiet refs/remotes/origin/main)" "$TITLE_PREVIOUS" ""
 
 git -C "$v/repo" update-ref refs/remotes/origin/main "$TITLE_HEAD"
 release_title "Changesets base differs from the PR target" "$TITLE_PLAN" \

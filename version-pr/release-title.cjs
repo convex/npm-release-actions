@@ -31,7 +31,7 @@ function createMissingBase(configuredBase) {
   // Only use HEAD for the branch already verified by the workflow's freshness check.
   const verifiedHead =
     branch === process.env.BASE_BRANCH && head === process.env.GITHUB_SHA ? head : undefined;
-  const commit = resolveCommit(remoteRef) ?? verifiedHead;
+  const commit = branch === process.env.BASE_BRANCH ? verifiedHead : resolveCommit(remoteRef);
   if (!commit) {
     throw new Error(`Changesets base ref ${JSON.stringify(configuredBase)} is unavailable`);
   }
