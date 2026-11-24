@@ -15,6 +15,12 @@ stages the tarball on npm for a maintainer to approve with 2FA.
 | `tag-version`         | push to `main`, `contents` and `actions` write       | Tags the commit that set an untagged, unpublished version and starts the release workflow on the tag.                  |
 
 Each action takes a `working-directory` input where it reads `package.json`.
+
+`version-pr` titles the PR and its commit `Release v<version>` using the
+Changesets release plan. It uses the package in `working-directory` when that
+package is being released, or the sole planned release when there is just one.
+Otherwise, the defaults are `Prepare next release` and `Version packages`.
+The `pr-title` and `commit-message` inputs can override either default.
 See [action-cache](https://github.com/convex/action-cache/tree/main/.github/workflows)
 for a complete `release.yml` and `version.yml`.
 

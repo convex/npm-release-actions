@@ -93,4 +93,31 @@ printf '#!/bin/bash\necho "npm $*" >> "%s"\n' "$vlog" > "$v/npm"; chmod +x "$v"/
 PATH="$v:$PATH" bash "$root/version-pr/version.sh"
 check "version-pr: lockfile sync order" "$(tr '\n' ';' < "$vlog")" "npx changeset version;npm install --package-lock-only --ignore-scripts;" ""
 
+# version-pr: read the planned version from the package's working directory.
+mkdir -p "$v/pkg"
+echo '{"name":"@x/pkg"}' > "$v/pkg/package.json"
+cat > "$v/npx" <<'S'
+#!/bin/bash
+[[ "$1 $2 $3 $4" == "--no-install changeset status --output" ]] || exit 1
+printf '%s\n' "$PLAN" > "$5"
+S
+release_title() { # name releases expected-title
+  local out
+  out=$(mktemp)
+  if (cd "$v/pkg" && PATH="$v:$PATH" PLAN="{\"releases\":$2}" GITHUB_OUTPUT="$out" \
+    bash "$root/version-pr/release-title.sh"); then
+    check "version-pr: $1" "$(cat "$out")" "$3" ""
+  else
+    check "version-pr: $1" "failed" "$3" ""
+  fi
+}
+release_title "primary package in a workspace" \
+  '[{"name":"other","newVersion":"4.2.1"},{"name":"@x/pkg","newVersion":"1.3.0"}]' \
+  "title=Release v1.3.0"
+release_title "sole changed package, including prerelease suffix" \
+  '[{"name":"@x/pkg","oldVersion":"1.2.0","newVersion":"1.2.0"},{"name":"other","newVersion":"4.2.1-alpha.0"}]' \
+  "title=Release v4.2.1-alpha.0"
+release_title "several packages with no primary release" \
+  '[{"name":"first","newVersion":"1.3.0"},{"name":"second","newVersion":"4.2.1"}]' ""
+
 [[ $failures == 0 ]] && echo "all passed" || { echo "$failures failed"; exit 1; }
